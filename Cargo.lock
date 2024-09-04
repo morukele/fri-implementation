@@ -59,6 +59,7 @@ dependencies = [
  "modulo",
  "rand",
  "rs_merkle",
+ "sha2",
 ]
 
 [[package]]

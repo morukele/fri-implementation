@@ -1,11 +1,10 @@
-use std::ops::{Add, Div, Mul, Sub};
-
 use modulo::Mod;
+use std::ops::{Add, Div, Mul, Sub};
 
 /// This is not necessary, there are external libraries for this.
 /// I am doing an implementation because I want to better understand the concept.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct FiniteField {
     pub num: u64,
     pub prime: u64,
@@ -111,6 +110,30 @@ impl Div for FiniteField {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Polynomial {
+    pub coeffs: Vec<FiniteField>,
+    pub prime: u64,
+}
+
+impl Polynomial {
+    pub fn new(coeffs: Vec<FiniteField>, prime: u64) -> Self {
+        Self { coeffs, prime }
+    }
+
+    pub fn evaluate(&self, x: FiniteField) -> FiniteField {
+        let eval = self
+            .coeffs
+            .iter()
+            .rev()
+            .fold(FiniteField::new(0, self.prime), |acc, coeff| {
+                acc * x + *coeff
+            });
+
+        eval
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +196,19 @@ mod tests {
         c = FiniteField::new(9, prime);
 
         assert_eq!(a / b, c);
+    }
+
+    #[test]
+    fn polynomial_evaluation() {
+        let prime = 97;
+        let a = FiniteField::new(1, prime);
+        let b = FiniteField::new(2, prime);
+        let c = FiniteField::new(3, prime);
+        let coeffs = vec![a, b, c];
+
+        let poly = Polynomial::new(coeffs, prime);
+        let res = poly.evaluate(FiniteField::new(5, prime));
+
+        assert_eq!(res, FiniteField::new(86, prime));
     }
 }

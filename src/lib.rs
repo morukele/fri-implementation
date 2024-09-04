@@ -1,4 +1,6 @@
-pub mod finite_field;
+pub mod fri;
+pub mod math;
 
 // public re-export
-pub use finite_field::*;
+pub use fri::*;
+pub use math::*;
