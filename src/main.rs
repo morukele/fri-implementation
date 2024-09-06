@@ -1,4 +1,6 @@
-use frs_iopp::{fri_commit, fri_query_phase, Field, FieldElement, Polynomial, ProofStream};
+use frs_iopp::{
+    fri_commit, fri_query_phase, verify_fri, Field, FieldElement, Polynomial, ProofStream,
+};
 
 fn main() {
     // Example pplynomial to encode
@@ -56,13 +58,16 @@ fn main() {
     // this is one of the roots of unity in the domain
     let nth_root_of_unit = FieldElement::new(28i128.pow(2), field);
 
-    let query_list = fri_query_phase(
+    let decommitments = fri_query_phase(
         nth_root_of_unit,
         domain.len(),
         &fri_layers,
         &mut transcript,
-        &number_of_queries,
+        number_of_queries,
     );
+
+    // verifier phase
+    let verified = verify_fri(&fri_layers, &decommitments, &mut transcript);
 
     // display results
     println!("COMMIT PHASE: ");
@@ -74,7 +79,7 @@ fn main() {
     println!("QUERY PHASE: ");
     println!("g (from verfier): {}", nth_root_of_unit.num);
 
-    for (i, query) in query_list.iter().enumerate() {
+    for (i, query) in decommitments.iter().enumerate() {
         let layers: Vec<i128> = query.layers_evaluations.iter().map(|l| l.num).collect();
         let layer_sym: Vec<i128> = query.layers_evaluations_sym.iter().map(|l| l.num).collect();
         println!(
@@ -87,4 +92,7 @@ fn main() {
         );
         println!();
     }
+
+    println!("VERIFICATION PHASE: ");
+    println!("Verified commit? - {}", verified);
 }

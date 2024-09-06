@@ -1,3 +1,5 @@
+use std::ops::Neg;
+
 use crate::{fold_polynomial, FieldElement, Polynomial, ProofStream};
 use merkle::{MerkleTree, Proof};
 use ring::{digest::Algorithm, digest::SHA256};
@@ -95,52 +97,137 @@ pub fn fri_query_phase(
     domain_size: usize,           // size of the domain.
     fri_layers: &Vec<FriLayer>,   // FRI layers generated during the commit phase.
     transcript: &mut ProofStream, // Proof stream for handling challanges.
-    number_of_queries: &usize,    // Number of queries to be made in the protocol.
+    number_of_queries: usize,     // Number of queries to be made in the protocol.
 ) -> Vec<FriDecommitment> {
     if !fri_layers.is_empty() {
-        let number_of_queries = *number_of_queries;
-        let iotas = (0..number_of_queries)
-            .map(|_| (transcript.objects.len() % domain_size))
+        let mut decommitments = Vec::with_capacity(number_of_queries);
+
+        // Generate a list of random indices
+        let query_indices = (0..number_of_queries as i32)
+            .map(|_| transcript.verifier_random_index(domain_size))
             .collect::<Vec<usize>>();
-        let query_list: Vec<FriDecommitment> = iotas
-            .iter()
-            .map(|_| {
-                // receive challange
-                let mut layers_auth_paths_sym = vec![];
-                let mut layers_evaluations_sym = vec![];
-                let mut layers_evaluations = vec![];
-                let mut layers_auth_paths = vec![];
 
-                for (i, layer) in fri_layers.iter().enumerate() {
-                    // evaluate the value at g and -g, then send the merkle roots to the verfier
-                    let eval = layer.polynomial.evaluate(g.pow(i as u32 + 1));
-                    let eval_sym = layer.polynomial.evaluate(-g.pow(i as u32 + 1));
+        // Process each query index
+        for &query_index in query_indices.iter() {
+            let mut layers_auth_paths_sym = vec![];
+            let mut layers_evaluations_sym = vec![];
+            let mut layers_evaluations = vec![];
+            let mut layers_auth_paths = vec![];
 
-                    // get merkle branches
-                    let auth_path = layer.merkle_tree.gen_proof(eval);
-                    let auth_path_sym = layer.merkle_tree.gen_proof(eval_sym);
+            // Iterate over each layer in the FRI layers
+            for (i, layer) in fri_layers.iter().enumerate() {
+                // Get the power of g for the current layer
+                let g_i = g.pow(i as u32 + 1);
+                let neg_g_i = g_i.neg(); // Compute -g^i
 
-                    // storing the results
-                    layers_auth_paths_sym.push(auth_path_sym);
-                    layers_evaluations_sym.push(eval_sym);
+                // Evaluate the polynomial at g^i and -g^i
+                let eval = layer.polynomial.evaluate(g_i);
+                let eval_sym = layer.polynomial.evaluate(neg_g_i);
 
-                    layers_evaluations.push(eval);
-                    layers_auth_paths.push(auth_path);
-                }
+                // Generate Merkle proofs for the evaluations at g^i and -g^i
+                let auth_path = layer.merkle_tree.gen_nth_proof(query_index);
+                let auth_path_sym = layer
+                    .merkle_tree
+                    .gen_nth_proof((query_index + domain_size / 2) % domain_size); // Symmetric point proof
 
-                FriDecommitment {
-                    layers_auth_paths_sym,
-                    layers_evaluations_sym,
-                    layers_evaluations,
-                    layers_auth_paths,
-                }
-            })
-            .collect();
+                // Push results into the vectors
+                layers_evaluations.push(eval);
+                layers_evaluations_sym.push(eval_sym);
+                layers_auth_paths.push(auth_path);
+                layers_auth_paths_sym.push(auth_path_sym);
+            }
 
-        query_list
+            // Store the decommitment for this query
+            decommitments.push(FriDecommitment {
+                layers_auth_paths_sym,
+                layers_evaluations_sym,
+                layers_evaluations,
+                layers_auth_paths,
+            });
+        }
+
+        decommitments
     } else {
         vec![]
     }
+}
+
+// Verifies the results of the FRI query phase.
+// This function checks the validity of the decommitment by verifying the Merkle proofs
+// and confirming the polynomial folding consistency across the FRI layers.
+pub fn verify_fri(
+    fri_layers: &Vec<FriLayer>, // FRI layers generated during the commit phase.
+    decommitments: &Vec<FriDecommitment>, // Decommitments provided during the query phase.
+    transcript: &mut ProofStream, // Proof stream for handling challenges.
+) -> bool {
+    // Iterate over each decommitment and verify it
+    for (query_index, decommitment) in decommitments.iter().enumerate() {
+        // for each layer, we need to verify the Merkle proof and consistency with the evaluations
+        for (i, layer) in fri_layers.iter().enumerate() {
+            // Extract the evaluation and the Merkle authentication path for both g and -g.
+            let eval = decommitment.layers_evaluations[i];
+            let eval_sym = decommitment.layers_evaluations_sym[i];
+            let auth_path = &decommitment.layers_auth_paths[i];
+            let auth_path_sym = &decommitment.layers_auth_paths_sym[i];
+
+            // Verify the Merkle proof for evaluation at g^i
+            let eval_proof_valid = match auth_path {
+                Some(proof) => proof.validate(layer.merkle_tree.root_hash()),
+                None => false,
+            };
+
+            // Verify the Merkle proof for evaluation at g^-1
+            let eval_sym_proof_valid = match auth_path_sym {
+                Some(proof) => proof.validate(layer.merkle_tree.root_hash()),
+                None => false,
+            };
+
+            // Both Merkle proofs must be valid.
+            if !eval_proof_valid || !eval_sym_proof_valid {
+                println!(
+                    "Merkle proof verification failed at layer {}, at query index {}",
+                    i, query_index
+                );
+                return false;
+            } else {
+                println!(
+                    "Merkle proof verification passed at layer {}, at query index {}",
+                    i, query_index
+                );
+            }
+
+            // Check consistency with the next layer by verifying that folding was done correctly.
+            // This can be done by recomputing the folded polynomial from eval and eval_sym and comparing.
+            // TODO: this does not produce the right result
+            if i < fri_layers.len() - 1 {
+                let alpha = transcript.verifier_fiat_shamir(&eval.field);
+                let folded_value = fold_polynomial_evaluation(eval, eval_sym, &alpha);
+
+                // The folded value must match the next layer's evaluation at g^(i+1).
+                let next_eval = decommitment.layers_evaluations[i + 1];
+                if folded_value != next_eval {
+                    println!("Folding consistency check failed at layer {}", i);
+                    return false;
+                } else {
+                    println!("Folding consistency check passed at layer {}", i);
+                }
+            }
+        }
+    }
+
+    // If all checks pass, return true
+    true
+}
+
+// Helper function to compute the folded polynomial evaluation.
+fn fold_polynomial_evaluation(
+    eval: FieldElement,
+    eval_sym: FieldElement,
+    alpha: &FieldElement,
+) -> FieldElement {
+    // Fold using the formula: f'(x) = (f(x) + f(-x)) / 2 + alpha * (f(x) - f(-x)) / 2
+    let two = FieldElement::new(2, eval.field);
+    ((eval + eval_sym) * two.inverse()) + (*alpha * (eval - eval_sym) * two.inverse())
 }
 
 #[cfg(test)]

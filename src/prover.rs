@@ -1,4 +1,5 @@
 use crate::{Field, FieldElement};
+use rand::Rng;
 use sha2::{Digest, Sha256};
 
 /// The `ProofStream` struct is used to simulate a transcript between the prover and verifier
@@ -64,5 +65,28 @@ impl ProofStream {
 
         // return a field element from bytes
         FieldElement::from_bytes(&result, *field)
+    }
+
+    pub fn verifier_fiat_shamir(&self, field: &Field) -> FieldElement {
+        let slice = &self.objects[self.read_index as usize];
+        let binding = serde_json::to_string(slice).expect("Serialization failed");
+        let data = binding.as_bytes();
+
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+
+        let result = hasher.finalize();
+
+        // return a field element from bytes
+        FieldElement::from_bytes(&result, *field)
+    }
+
+    // Generates a pseudorandom index
+    pub fn verifier_random_index(&mut self, domain_size: usize) -> usize {
+        let mut rng = rand::thread_rng();
+        let num: usize = rng.gen();
+
+        // Return the result mod domain_size to fit within the valid index range
+        num % domain_size
     }
 }
