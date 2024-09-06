@@ -17,6 +17,7 @@ pub struct FieldElement {
 impl FieldElement {
     // Creates a new `FieldElement` given a value and a field.
     pub fn new(num: i128, field: Field) -> Self {
+        let num = num.modulo(field.prime);
         Self { num, field }
     }
 
@@ -27,6 +28,7 @@ impl FieldElement {
         let mut array = [0u8; 8];
         array.copy_from_slice(&bytes[0..8]);
         let num = i64::from_be_bytes(array) as i128;
+        let num = num.modulo(field.prime);
 
         FieldElement { num, field }
     }

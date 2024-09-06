@@ -53,6 +53,7 @@ pub fn fri_commit(
 
         // Compute layer polynomial and domain
         let new_domain = domain[i];
+        println!("folding with: {:?}", &alpha);
         current_poly = fold_polynomial(&current_poly, &alpha);
         current_layer = FriLayer::new(&current_poly, vec![new_domain]);
         let new_data = current_layer.merkle_tree.root_hash();
