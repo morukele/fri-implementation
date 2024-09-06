@@ -6,14 +6,15 @@ static DIGEST: &Algorithm = &SHA256;
 
 #[derive(Clone, Debug)]
 pub struct FriLayer {
-    pub polynomial: Polynomial,
-    pub merkle_tree: MerkleTree<FieldElement>,
-    pub coset_offset: FieldElement,
-    pub domain: Vec<FieldElement>,
+    pub polynomial: Polynomial, // The polynomial associated with this FRI layer.
+    pub merkle_tree: MerkleTree<FieldElement>, // Merkle tree for commitments based on the polynomial evaluation.
+    pub domain: Vec<FieldElement>,             // Domain over with the polynomial is evaluated.
 }
 
 impl FriLayer {
-    pub fn new(poly: &Polynomial, coset_offset: &FieldElement, domain: Vec<FieldElement>) -> Self {
+    // Constructs a new `FriLayer` with a given polynomial, coset offset, and domain.
+    // The polynomial is evaluated over the domain, and a Merkle tree is created based on the evaluations.
+    pub fn new(poly: &Polynomial, domain: Vec<FieldElement>) -> Self {
         let evaluation = poly.evaluate_domain(&domain);
 
         let merkle_tree = MerkleTree::from_vec(DIGEST, evaluation.clone());
@@ -21,44 +22,39 @@ impl FriLayer {
         Self {
             polynomial: poly.clone(),
             merkle_tree,
-            coset_offset: *coset_offset,
             domain,
         }
     }
 }
 
-// Commit phase of the protocol
+// The commit phase of the FRI protocol.
+// This phase is responsible for generating commitments to multiple layers of polynomials and storing them in a proof transcript.
 pub fn fri_commit(
-    number_layers: usize,
-    p_0: Polynomial,
-    transcript: &mut ProofStream,
-    coset_offset: FieldElement,
-    domain: &Vec<FieldElement>,
+    number_layers: usize,         // The number of layers in the FRI commitment.
+    p_0: Polynomial,              // Initial polynomial.
+    transcript: &mut ProofStream, // Proof stream to store commitments.
+    domain: &Vec<FieldElement>,   // Domain of the FRI layers.
 ) -> (FieldElement, Vec<FriLayer>) {
     let field = p_0.coeffs[0].field;
 
     // setup phase
     let mut fri_layers = Vec::with_capacity(number_layers);
-    let mut current_layer = FriLayer::new(&p_0, &coset_offset, domain.clone());
+    let mut current_layer = FriLayer::new(&p_0, domain.clone());
     fri_layers.push(current_layer.clone());
     let mut current_poly = p_0;
 
     // send first commitment
     transcript.push(current_layer.merkle_tree.root_hash());
 
-    let mut coset_offset = coset_offset;
-
     // begin the interactive phase
     for i in 1..number_layers {
         // recieve challange
         let alpha = transcript.prover_fiat_shamir(&field);
 
-        coset_offset = coset_offset.pow(2);
-
         // Compute layer polynomial and domain
         let new_domain = domain[i];
         current_poly = fold_polynomial(&current_poly, &alpha);
-        current_layer = FriLayer::new(&current_poly, &coset_offset, vec![new_domain]);
+        current_layer = FriLayer::new(&current_poly, vec![new_domain]);
         let new_data = current_layer.merkle_tree.root_hash();
         fri_layers.push(current_layer.clone());
 
@@ -81,7 +77,8 @@ pub fn fri_commit(
     (*last_value, fri_layers)
 }
 
-/// This struct holds the evaluation pairs of the decommittment for better handling
+/// The `FriDecommitment` struct holds evaluation pairs and authentication paths
+/// for verifying FRI decommitments.
 #[derive(Debug, Clone)]
 pub struct FriDecommitment {
     pub layers_auth_paths_sym: Vec<Option<Proof<FieldElement>>>,
@@ -90,13 +87,14 @@ pub struct FriDecommitment {
     pub layers_evaluations: Vec<FieldElement>,
 }
 
-// The query phase of the FRI protocol
+// The query phase of the FRI protocol.
+// Verifies whether the values at randomly selected points in the domain match the polynomial evaluations.
 pub fn fri_query_phase(
-    g: FieldElement, // nth root of unity
-    domain_size: usize,
-    fri_layers: &Vec<FriLayer>,
-    transcript: &mut ProofStream,
-    number_of_queries: &usize,
+    g: FieldElement,              // nth root of unity for domain evaluation.
+    domain_size: usize,           // size of the domain.
+    fri_layers: &Vec<FriLayer>,   // FRI layers generated during the commit phase.
+    transcript: &mut ProofStream, // Proof stream for handling challanges.
+    number_of_queries: &usize,    // Number of queries to be made in the protocol.
 ) -> Vec<FriDecommitment> {
     if !fri_layers.is_empty() {
         let number_of_queries = *number_of_queries;
@@ -157,7 +155,6 @@ mod tests {
         let b = FieldElement::new(2, field);
         let c = FieldElement::new(3, field);
         let poly = Polynomial::new(vec![a, b, c]);
-        let coset_offset = FieldElement::new(10, field);
 
         let domain = vec![
             FieldElement::new(0, field),
@@ -165,7 +162,7 @@ mod tests {
             FieldElement::new(2, field),
         ];
 
-        let layer = FriLayer::new(&poly, &coset_offset, domain);
+        let layer = FriLayer::new(&poly, domain);
 
         assert!(!layer.polynomial.coeffs.is_empty());
     }

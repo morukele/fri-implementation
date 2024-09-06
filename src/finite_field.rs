@@ -6,17 +6,22 @@ use std::ops::{Add, BitXor, Div, Mul, Neg, Sub};
 /// This is not necessary, there are external libraries for this.
 /// I am doing an implementation because I want to better understand the concept.
 
+// The `FieldElement` struct represents an element in a finite field, storing
+// both the numeric value (`num`) and a reference to the field it belongs to (`field`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct FieldElement {
-    pub num: i128,
-    pub field: Field,
+    pub num: i128,    // The numeric value of the field element.
+    pub field: Field, // The field that this element belongs to.
 }
 
 impl FieldElement {
+    // Creates a new `FieldElement` given a value and a field.
     pub fn new(num: i128, field: Field) -> Self {
         Self { num, field }
     }
 
+    // Constructs a `FieldElement` from a byte slice, converting the first 8 bytes into an integer.
+    // This method allows for generating field elements from a hash or byte array.
     pub fn from_bytes(bytes: &[u8], field: Field) -> Self {
         // convert the first 8 bytes of the hash to i64
         let mut array = [0u8; 8];
@@ -26,6 +31,8 @@ impl FieldElement {
         FieldElement { num, field }
     }
 
+    // Computes the power of the `FieldElement` using a given exponent.
+    // The result is taken modulo the prime of the field.
     pub fn pow(&self, exponent: u32) -> Self {
         let num = self.num.pow(exponent).modulo(self.field.prime);
         Self {
@@ -34,26 +41,32 @@ impl FieldElement {
         }
     }
 
+    // Returns the multiplicative inverse of the `FieldElement`.
+    // This is computed using the field's inverse operation.
     pub fn inverse(&self) -> Self {
-        return self.field.inverse(*self);
+        self.field.inverse(*self)
     }
 }
 
-// need to implement this to be hashable in the merkle tree
+// Implements the `Hashable` trait to make `FieldElement` usable in a Merkle tree.
+// This is necessary for generating and verifying Merkle proofs.
 impl Hashable for FieldElement {
     fn update_context(&self, context: &mut Context) {
+        // Converts the field element to little-endian bytes and updates the context.
         let bytes: Vec<u8> = self.num.to_le_bytes().to_vec();
         context.update(&bytes);
     }
 }
 
-// this is necessary to check if two fields are equal or not.
+// Implements the `PartialEq` trait to compare two `FieldElement` instances.
+// Two field elements are considered equal if their numeric values are the same.
 impl PartialEq for FieldElement {
     fn eq(&self, other: &Self) -> bool {
         self.num == other.num
     }
 }
 
+// Implements the `Add` trait to enable addition of two `FieldElement` instances.
 impl Add for FieldElement {
     type Output = Self;
 
@@ -72,6 +85,7 @@ impl Add for FieldElement {
     }
 }
 
+// Implements the `Mul` trait for multiplication of `FieldElement` instances.
 impl Mul for FieldElement {
     type Output = Self;
 
@@ -80,6 +94,7 @@ impl Mul for FieldElement {
     }
 }
 
+// Implements the `Sub` trait for subtraction of `FieldElement` instances.
 impl Sub for FieldElement {
     type Output = Self;
 
@@ -88,6 +103,7 @@ impl Sub for FieldElement {
     }
 }
 
+// Implements the `Div` trait for division of `FieldElement` instances.
 impl Div for FieldElement {
     type Output = Self;
 
@@ -96,6 +112,7 @@ impl Div for FieldElement {
     }
 }
 
+// Implements the `Neg` trait for negation of `FieldElement` instances.
 impl Neg for FieldElement {
     type Output = Self;
 
@@ -104,16 +121,19 @@ impl Neg for FieldElement {
     }
 }
 
+// The `Field` struct represents a finite field defined by a prime modulus.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct Field {
     pub prime: i128,
 }
 
 impl Field {
+    // Creates a new finite field with the given prime modulus.
     pub fn new(prime: i128) -> Self {
         Self { prime }
     }
 
+    // Returns the additive identity (0) for the field.
     pub fn zero(&self) -> FieldElement {
         FieldElement {
             num: 0,
@@ -121,6 +141,7 @@ impl Field {
         }
     }
 
+    // Returns the multiplicative identity (1) for the field.
     pub fn one(&self) -> FieldElement {
         FieldElement {
             num: 1,
@@ -128,6 +149,7 @@ impl Field {
         }
     }
 
+    // Multiplies two `FieldElement` instances and returns the result, reduced modulo the prime.
     pub fn multiply(&self, left: FieldElement, right: FieldElement) -> FieldElement {
         FieldElement {
             num: (left.num * right.num).modulo(self.prime),
@@ -135,6 +157,7 @@ impl Field {
         }
     }
 
+    // Adds two `FieldElement` instances and returns the result, reduced modulo the prime.
     pub fn add(&self, left: FieldElement, right: FieldElement) -> FieldElement {
         FieldElement {
             num: (left.num + right.num).modulo(self.prime),
@@ -142,6 +165,7 @@ impl Field {
         }
     }
 
+    // Subtracts the second `FieldElement` from the first, reduced modulo the prime.
     pub fn subtract(&self, left: FieldElement, right: FieldElement) -> FieldElement {
         FieldElement {
             num: (self.prime + left.num - right.num).modulo(self.prime),
@@ -149,6 +173,7 @@ impl Field {
         }
     }
 
+    // Divides the first `FieldElement` by the second by using the extended Euclidean algorithm.
     pub fn divide(&self, left: FieldElement, right: FieldElement) -> FieldElement {
         assert!(right.num != 0, "divide by 0");
 
@@ -159,6 +184,7 @@ impl Field {
         }
     }
 
+    // Returns the multiplicative inverse of a `FieldElement` using the extended Euclidean algorithm.
     pub fn inverse(&self, operand: FieldElement) -> FieldElement {
         let (a, _b, _c) = extended_euclidean_algorithm(operand.num, self.prime);
         FieldElement {
@@ -167,6 +193,7 @@ impl Field {
         }
     }
 
+    // Returns the negation of a `FieldElement`.
     pub fn negate(&self, operand: FieldElement) -> FieldElement {
         FieldElement {
             num: (self.prime - operand.num).modulo(self.prime),
@@ -174,11 +201,14 @@ impl Field {
         }
     }
 
+    // Returns a generator for the field. In this case, the number 28 is used as the generator.
     pub fn generator(&self) -> FieldElement {
         // using 2 as the generator of the field because 2 has high order
         FieldElement::new(28, *self)
     }
 
+    // Returns the nth primitive root of unity in the field by exponentiating the generator.
+    //NB: didn't use this in the code because it was a very expensive operation
     pub fn primitive_nth_root(&self, n: i128) -> FieldElement {
         let mut root = self.generator(); // Start with the generator of the field
         let mut order = 2;
@@ -192,6 +222,8 @@ impl Field {
         root
     }
 
+    // Samples a field element from a byte array by treating the array as an integer
+    // and reducing it modulo the field's prime.
     pub fn sample(self, byte_array: Vec<u8>) -> FieldElement {
         let mut acc: i128 = 0;
         for b in byte_array {
@@ -202,6 +234,8 @@ impl Field {
     }
 }
 
+// Extended Euclidean algorithm used to compute the greatest common divisor (gcd) of two integers.
+// This is used to find the multiplicative inverse in the field.
 pub fn extended_euclidean_algorithm(a: i128, b: i128) -> (i128, i128, i128) {
     let (mut old_r, mut r) = (a, b);
     let (mut old_s, mut s) = (1, 0);

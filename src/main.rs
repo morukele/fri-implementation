@@ -26,7 +26,6 @@ fn main() {
     ];
 
     let poly = Polynomial::new(vec![a, b, c, d, e, f, g, h]);
-    let coset_offset = FieldElement::new(1, field);
     let mut transcript = ProofStream::new();
     let num_layer = 3; // this is based on the equation
     let number_of_queries = 10;
@@ -36,8 +35,7 @@ fn main() {
     println!();
 
     // commit phase
-    let (last_value, fri_layers) =
-        fri_commit(num_layer, poly, &mut transcript, coset_offset, &domain);
+    let (last_value, fri_layers) = fri_commit(num_layer, poly, &mut transcript, &domain);
 
     // displaying the results of the folding and mixing
     for (i, val) in fri_layers.iter().enumerate() {
@@ -68,23 +66,24 @@ fn main() {
 
     // display results
     println!("COMMIT PHASE: ");
-    println!("g (from verfier): {}", nth_root_of_unit.num);
     for (i, val) in transcript.objects.iter().enumerate() {
         println!("Merkle root - {}: {:?}", i, val);
     }
     println!();
 
     println!("QUERY PHASE: ");
+    println!("g (from verfier): {}", nth_root_of_unit.num);
+
     for (i, query) in query_list.iter().enumerate() {
         let layers: Vec<i128> = query.layers_evaluations.iter().map(|l| l.num).collect();
         let layer_sym: Vec<i128> = query.layers_evaluations_sym.iter().map(|l| l.num).collect();
         println!(
             "Layer {} evaluation at {} and {}: {:?}",
-            i, g.num, -g.num, layers
+            i, nth_root_of_unit.num, -nth_root_of_unit.num, layers
         );
         println!(
             "Layer {} evaluation symetric at {} and {}: {:?}",
-            i, g.num, -g.num, layer_sym
+            i, nth_root_of_unit.num, -nth_root_of_unit.num, layer_sym
         );
         println!();
     }

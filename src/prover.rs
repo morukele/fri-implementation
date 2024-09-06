@@ -1,7 +1,9 @@
+use crate::{Field, FieldElement};
 use sha2::{Digest, Sha256};
 
-use crate::{Field, FieldElement};
-
+/// The `ProofStream` struct is used to simulate a transcript between the prover and verifier
+/// in an interactive proof system. It stores a sequence of objects (typically commitments or queries),
+/// and supports pushing new objects or pulling previously pushed ones in sequence.
 #[derive(Default)]
 pub struct ProofStream {
     pub objects: Vec<Vec<u8>>,
@@ -9,6 +11,7 @@ pub struct ProofStream {
 }
 
 impl ProofStream {
+    // Creates a new, empty `ProofStream` with no objects and the read index set to zero.
     pub fn new() -> Self {
         Self {
             objects: vec![],
@@ -16,10 +19,14 @@ impl ProofStream {
         }
     }
 
+    // Adds a new object (byte array) to the proof stream.
+    // This simulates the prover pushing data into the proof stream.
     pub fn push(&mut self, object: &Vec<u8>) {
         self.objects.push(object.clone());
     }
 
+    // Retrieves the next object from the proof stream, advancing the read index.
+    // This simulates the verifier pulling data from the proof stream.
     pub fn pull(&mut self) -> Vec<u8> {
         assert!(
             self.read_index < self.objects.len() as i64,
@@ -31,10 +38,14 @@ impl ProofStream {
         obj
     }
 
+    // Serializes the current state of the proof stream to a JSON string.
+    // This can be used to store or transfer the proof stream.
     pub fn serialize(&self) -> String {
         serde_json::to_string(&self.objects.clone()).unwrap()
     }
 
+    // Deserializes a JSON string into a new `ProofStream` instance.
+    // This can be used to reconstruct a proof stream from serialized data.
     pub fn deserialize(&self, string_obj: String) -> Self {
         let mut ps = ProofStream::new();
         ps.objects = serde_json::from_str(&string_obj).unwrap();
@@ -42,6 +53,9 @@ impl ProofStream {
         ps
     }
 
+    // Prover's Fiat-Shamir heuristic.
+    // The prover hashes the current state of the proof stream to generate a challenge
+    // in the form of a `FieldElement`. This method simulates the prover's Fiat-Shamir process.
     pub fn prover_fiat_shamir(&self, field: &Field) -> FieldElement {
         let mut hasher = Sha256::new();
         hasher.update(self.serialize().as_bytes());
@@ -49,19 +63,6 @@ impl ProofStream {
         let result = hasher.finalize();
 
         // return a field element from bytes
-        FieldElement::from_bytes(&result, *field)
-    }
-
-    pub fn verifier_fiat_shamir(self, field: &Field) -> FieldElement {
-        let sliced_objects = &self.objects[..self.read_index as usize];
-        let serialized_data = serde_json::to_string(&sliced_objects).unwrap();
-
-        // perform the hashing
-        let mut hasher = Sha256::new();
-        hasher.update(&serialized_data);
-        let result = hasher.finalize();
-
-        // return a field element from the hashing
         FieldElement::from_bytes(&result, *field)
     }
 }

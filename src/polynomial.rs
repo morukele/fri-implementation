@@ -1,17 +1,22 @@
+use crate::FieldElement;
 use serde::{Deserialize, Serialize};
 
-use crate::FieldElement;
-
+// The `Polynomial` struct represents a polynomial where the coefficients
+// are elements in a finite field (FieldElement).
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Polynomial {
     pub coeffs: Vec<FieldElement>,
 }
 
 impl Polynomial {
+    // Constructs a new polynomial from a vector of coefficients.
     pub fn new(coeffs: Vec<FieldElement>) -> Self {
         Self { coeffs }
     }
 
+    // Evaluates the polynomial at a given point `x` (which is a `FieldElement`).
+    // This function implements Horner's method, evaluating the polynomial by
+    // iterating through the coefficients and computing the result.
     pub fn evaluate(&self, x: FieldElement) -> FieldElement {
         let mut xi = x.field.one();
         let mut value = x.field.zero();
@@ -23,6 +28,8 @@ impl Polynomial {
         value
     }
 
+    // Evaluates the polynomial over an entire domain of points (a vector of `FieldElement`s).
+    // Returns a vector of the results for each point in the domain.
     pub fn evaluate_domain(&self, domain: &Vec<FieldElement>) -> Vec<FieldElement> {
         let mut output = Vec::with_capacity(domain.len());
         for x in domain {
@@ -38,31 +45,34 @@ impl Polynomial {
 ///
 /// # Arguments
 ///
-/// * `coeffs` - A vector of coefficients representing the input polynomial.
-/// * `beta` - A random number used for folding. Both `beta` and coefficients are finite fields.
+/// * `poly` - The input polynomial to be folded.
+/// * `beta` - A random field element used for folding.
 ///
 /// # Returns
 ///
-/// A vector representing the folded polynomial.
+/// A new `Polynomial` instance where the even-indexed and odd-indexed coefficients are combined using the folding technique.
 pub fn fold_polynomial(poly: &Polynomial, beta: &FieldElement) -> Polynomial {
     let coeffs = poly.coeffs.clone();
-    // split polynomial into even and odd indexes, multiply the odd indexes by beta and return the vector of folded polynomial coefficients
+
+    // split polynomial into even and odd indexes,
+    // multiply the odd indexes by beta and return the vector of folded polynomial coefficients
     let even: Vec<FieldElement> = coeffs.iter().step_by(2).cloned().collect();
     let odd: Vec<FieldElement> = coeffs
         .iter()
         .skip(1)
         .step_by(2)
         .cloned()
-        .map(|o| o * *beta)
+        .map(|o| o * *beta) //Multiply odd-indexed coefficients by `beta`.
         .collect();
 
-    // result
+    // Combine the even and odd coefficients by adding corresponding elements.
     let coeffs = even
         .iter()
         .zip(odd.iter())
         .map(|(even, odd)| *even + *odd)
         .collect();
 
+    // Return the new folded polynomial.
     Polynomial::new(coeffs)
 }
 
