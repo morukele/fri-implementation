@@ -67,7 +67,12 @@ fn main() {
     );
 
     // verifier phase
-    let verified = verify_fri(&fri_layers, &decommitments, &mut transcript);
+    let verified = verify_fri(
+        &fri_layers,
+        &decommitments,
+        &mut transcript,
+        nth_root_of_unit,
+    );
 
     // display results
     println!("COMMIT PHASE: ");
