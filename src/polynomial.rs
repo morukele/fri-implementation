@@ -12,20 +12,6 @@ impl Polynomial {
         Self { coeffs }
     }
 
-    pub fn degree(&self) -> i64 {
-        if self.coeffs.is_empty() {
-            return -1;
-        }
-        let zero = self.coeffs[0].field.zero();
-        let mut maxindex = 0;
-        for i in 0..self.coeffs.len() {
-            if self.coeffs[i] != zero {
-                maxindex = i
-            }
-        }
-        maxindex as i64
-    }
-
     pub fn evaluate(&self, x: FieldElement) -> FieldElement {
         let mut xi = x.field.one();
         let mut value = x.field.zero();
@@ -113,7 +99,7 @@ mod tests {
 
         let res = poly.evaluate_domain(&domain);
 
-        assert_eq!(res.len(), 5);
+        assert_eq!(res.len(), 3);
         assert_eq!(res[0], FieldElement::new(1, field));
         assert_eq!(res[1], FieldElement::new(6, field));
     }

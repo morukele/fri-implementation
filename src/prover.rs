@@ -49,7 +49,7 @@ impl ProofStream {
         let result = hasher.finalize();
 
         // return a field element from bytes
-        FieldElement::from_bytes(&result, field.clone())
+        FieldElement::from_bytes(&result, *field)
     }
 
     pub fn verifier_fiat_shamir(self, field: &Field) -> FieldElement {
@@ -62,6 +62,6 @@ impl ProofStream {
         let result = hasher.finalize();
 
         // return a field element from the hashing
-        FieldElement::from_bytes(&result, field.clone())
+        FieldElement::from_bytes(&result, *field)
     }
 }
