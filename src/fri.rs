@@ -202,7 +202,7 @@ pub fn verify_fri(
             // TODO: this does not produce the right result
             if i < fri_layers.len() - 1 {
                 let alpha = transcript.verifier_fiat_shamir(&eval.field);
-                let folded_value = fold_polynomial_evaluation(eval, eval_sym, &alpha, g);
+                let folded_value = folded_polynomial_evaluation(eval, eval_sym, &alpha, g);
 
                 // The folded value must match the next layer's evaluation at g^(i+1).
                 let next_eval = decommitment.layers_evaluations[i + 1];
@@ -221,7 +221,7 @@ pub fn verify_fri(
 }
 
 // Helper function to compute the folded polynomial evaluation.
-fn fold_polynomial_evaluation(
+fn folded_polynomial_evaluation(
     eval: FieldElement,
     eval_sym: FieldElement,
     alpha: &FieldElement,
@@ -229,7 +229,11 @@ fn fold_polynomial_evaluation(
 ) -> FieldElement {
     // Fold using the formula: f'(x) = (f(x) + f(-x)) / 2 + alpha * (f(x) - f(-x)) / 2x
     let two = FieldElement::new(2, eval.field);
-    ((eval + eval_sym) * two.inverse()) + (*alpha * (eval - eval_sym) * (two.inverse() * g))
+    let term1 = (eval + eval_sym) / two;
+    let term2 = (eval - eval_sym) / (two * g);
+    let term2 = term2 * *alpha;
+
+    term1 + term2
 }
 
 #[cfg(test)]
