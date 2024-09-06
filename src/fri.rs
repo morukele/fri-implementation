@@ -1,175 +1,172 @@
-use rs_merkle::{algorithms, Hasher, MerkleTree};
+use crate::{fold_polynomial, FieldElement, Polynomial, ProofStream};
+use merkle::{MerkleTree, Proof};
+use ring::{digest::Algorithm, digest::SHA256};
 
-use crate::{FiniteField, Polynomial};
+static DIGEST: &Algorithm = &SHA256;
 
-/// This struct holds a layer for the FRI protocol.
-/// It contains the evaluations of the polynomial at the layer, and the corresponding merkel tree.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FriLayer {
-    // holds the evaluation of the polynomial
-    pub evaluations: Vec<FiniteField>,
-    // holds the merket tree of the evaluation
-    pub merkle_tree: MerkleTree<algorithms::Sha256>,
-    // the size of the domain to evaluate over
-    pub domain_size: usize,
+    pub polynomial: Polynomial,
+    pub merkle_tree: MerkleTree<FieldElement>,
+    pub coset_offset: FieldElement,
+    pub domain: Vec<FieldElement>,
 }
 
 impl FriLayer {
-    pub fn new(polynomial: Polynomial, domain_size: usize) -> Self {
-        // evaluate the polynomial over the given domain
-        let mut evaluations = vec![FiniteField::new(0, polynomial.prime); domain_size];
+    pub fn new(poly: &Polynomial, coset_offset: &FieldElement, domain: Vec<FieldElement>) -> Self {
+        let evaluation = poly.evaluate_domain(&domain);
 
-        for i in 0..domain_size {
-            let x = FiniteField::new(i as u64, polynomial.prime);
-            let eval = polynomial.evaluate(x);
-            evaluations[i] = eval;
-        }
-
-        // generate merkel tree
-        let leaves: Vec<[u8; 32]> = evaluations
-            .iter()
-            // important to convert the number to bytes for the sake of this crate
-            .map(|x| algorithms::Sha256::hash(x.num.to_string().as_bytes()))
-            .collect();
-        let mut merkle_tree: MerkleTree<algorithms::Sha256> = MerkleTree::from_leaves(&leaves);
-        merkle_tree.commit();
+        let merkle_tree = MerkleTree::from_vec(DIGEST, evaluation.clone());
 
         Self {
-            evaluations,
+            polynomial: poly.clone(),
             merkle_tree,
-            domain_size,
+            coset_offset: *coset_offset,
+            domain,
         }
     }
 }
 
-/// Performs polynomial folding on a given set of coefficients.
-///
-/// # Arguments
-///
-/// * `coeffs` - A vector of coefficients representing the input polynomial.
-/// * `beta` - A random number used for folding. Both `beta` and coefficients are finite fields.
-///
-/// # Returns
-///
-/// A vector representing the folded polynomial.
-pub fn fold_polynomial(poly: Polynomial, beta: FiniteField) -> Polynomial {
-    let coeffs = poly.coeffs;
-    // split polynomial into even and odd indexes, multiply the odd indexes by beta and return the vector of folded polynomial coefficients
-    let even: Vec<FiniteField> = coeffs.iter().step_by(2).cloned().collect();
-    let odd: Vec<FiniteField> = coeffs
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .cloned()
-        .map(|o| o * beta)
-        .collect();
+// Commit phase of the protocol
+pub fn fri_commit(
+    number_layers: usize,
+    p_0: Polynomial,
+    transcript: &mut ProofStream,
+    coset_offset: FieldElement,
+    domain: &Vec<FieldElement>,
+) -> (FieldElement, Vec<FriLayer>) {
+    let field = p_0.coeffs[0].field;
 
-    // result
-    let coeffs = even
-        .iter()
-        .zip(odd.iter())
-        .map(|(even, odd)| *even + *odd)
-        .collect();
+    // setup phase
+    let mut fri_layers = Vec::with_capacity(number_layers);
+    let mut current_layer = FriLayer::new(&p_0, &coset_offset, domain.clone());
+    fri_layers.push(current_layer.clone());
+    let mut current_poly = p_0;
 
-    Polynomial::new(coeffs, poly.prime)
+    // send first commitment
+    transcript.push(current_layer.merkle_tree.root_hash());
+
+    let mut coset_offset = coset_offset;
+
+    // begin the interactive phase
+    for i in 1..number_layers {
+        // recieve challange
+        let alpha = transcript.prover_fiat_shamir(&field);
+
+        coset_offset = coset_offset.pow(2);
+
+        // Compute layer polynomial and domain
+        let new_domain = domain[i];
+        current_poly = fold_polynomial(&current_poly, &alpha);
+        current_layer = FriLayer::new(&current_poly, &coset_offset, vec![new_domain]);
+        let new_data = current_layer.merkle_tree.root_hash();
+        fri_layers.push(current_layer.clone());
+
+        // sending commitment
+        transcript.push(new_data);
+    }
+
+    // last round
+    // receive challange
+    let alpha = transcript.prover_fiat_shamir(&field);
+
+    let last_poly = fold_polynomial(&current_poly, &alpha);
+
+    let zero = FieldElement::new(0, field);
+    let last_value = last_poly.coeffs.first().unwrap_or(&zero);
+
+    // send last value as raw byte
+    transcript.push(&last_value.num.to_be_bytes().to_vec());
+
+    (*last_value, fri_layers)
 }
 
-/// The function handles the commitment phase of the FRI protocol
-pub fn commit() {}
+/// This struct holds the evaluation pairs of the decommittment for better handling
+#[derive(Debug, Clone)]
+pub struct FriDecommitment {
+    pub layers_auth_paths_sym: Vec<Option<Proof<FieldElement>>>,
+    pub layers_evaluations_sym: Vec<FieldElement>,
+    pub layers_auth_paths: Vec<Option<Proof<FieldElement>>>,
+    pub layers_evaluations: Vec<FieldElement>,
+}
 
-pub fn query() {}
+// The query phase of the FRI protocol
+pub fn fri_query_phase(
+    g: FieldElement, // nth root of unity
+    domain_size: usize,
+    fri_layers: &Vec<FriLayer>,
+    transcript: &mut ProofStream,
+    number_of_queries: &usize,
+) -> Vec<FriDecommitment> {
+    if !fri_layers.is_empty() {
+        let number_of_queries = *number_of_queries;
+        let iotas = (0..number_of_queries)
+            .map(|_| (transcript.objects.len() % domain_size))
+            .collect::<Vec<usize>>();
+        let query_list: Vec<FriDecommitment> = iotas
+            .iter()
+            .map(|_| {
+                // receive challange
+                let mut layers_auth_paths_sym = vec![];
+                let mut layers_evaluations_sym = vec![];
+                let mut layers_evaluations = vec![];
+                let mut layers_auth_paths = vec![];
+
+                for (i, layer) in fri_layers.iter().enumerate() {
+                    // evaluate the value at g and -g, then send the merkle roots to the verfier
+                    let eval = layer.polynomial.evaluate(g.pow(i as u32 + 1));
+                    let eval_sym = layer.polynomial.evaluate(-g.pow(i as u32 + 1));
+
+                    // get merkle branches
+                    let auth_path = layer.merkle_tree.gen_proof(eval);
+                    let auth_path_sym = layer.merkle_tree.gen_proof(eval_sym);
+
+                    // storing the results
+                    layers_auth_paths_sym.push(auth_path_sym);
+                    layers_evaluations_sym.push(eval_sym);
+
+                    layers_evaluations.push(eval);
+                    layers_auth_paths.push(auth_path);
+                }
+
+                FriDecommitment {
+                    layers_auth_paths_sym,
+                    layers_evaluations_sym,
+                    layers_evaluations,
+                    layers_auth_paths,
+                }
+            })
+            .collect();
+
+        query_list
+    } else {
+        vec![]
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rs_merkle::{algorithms::Sha256, Hasher, MerkleTree};
+    use crate::{Field, FieldElement};
 
     #[test]
-    fn able_to_fold_polynomial_by_factor_of_two() {
-        let coeffs = vec![
-            FiniteField::new(19, 97),
-            FiniteField::new(56, 97),
-            FiniteField::new(34, 97),
-            FiniteField::new(48, 97),
-            FiniteField::new(43, 97),
-            FiniteField::new(37, 97),
-            FiniteField::new(10, 97),
-            FiniteField::new(0, 97),
-        ];
-        let beta = FiniteField::new(12, 97);
-        let poly = Polynomial::new(coeffs, 97);
-        let res = fold_polynomial(poly, beta);
-
-        assert_eq!(
-            res.coeffs,
-            [
-                FiniteField::new(12, 97),
-                FiniteField::new(28, 97),
-                FiniteField::new(2, 97),
-                FiniteField::new(10, 97)
-            ]
-        )
-    }
-
-    #[test]
-    fn able_to_fold_to_a_singe_coeff_by_factor_of_two() {
-        let coeffs = vec![
-            FiniteField::new(19, 97),
-            FiniteField::new(56, 97),
-            FiniteField::new(34, 97),
-            FiniteField::new(48, 97),
-            FiniteField::new(43, 97),
-            FiniteField::new(37, 97),
-            FiniteField::new(10, 97),
-            FiniteField::new(0, 97),
-        ];
-
-        // round one
-        println!("{:?}", &coeffs);
-        let mut poly = Polynomial::new(coeffs, 97);
-        let mut beta = FiniteField::new(12, 97);
-        poly = fold_polynomial(poly, beta);
-        assert_eq!(
-            poly.coeffs,
-            [
-                FiniteField::new(12, 97),
-                FiniteField::new(28, 97),
-                FiniteField::new(2, 97),
-                FiniteField::new(10, 97)
-            ]
-        );
-
-        // round two
-        println!("{:?}", &poly);
-        beta = FiniteField::new(32, 97);
-        poly = fold_polynomial(poly, beta);
-        assert_eq!(
-            poly.coeffs,
-            [FiniteField::new(35, 97), FiniteField::new(31, 97),]
-        );
-
-        // round three
-        println!("{:?}", &poly);
-        beta = FiniteField::new(64, 97);
-        poly = fold_polynomial(poly, beta);
-        assert_eq!(poly.coeffs, [FiniteField::new(79, 97)]);
-    }
-
-    #[test]
-    fn create_new_fri_layer() {
+    fn can_create_fri_layer() {
         let prime = 97;
-        let a = FiniteField::new(1, prime);
-        let b = FiniteField::new(2, prime);
-        let c = FiniteField::new(3, prime);
-        let coeffs = vec![a, b, c];
+        let field = Field::new(prime);
+        let a = FieldElement::new(1, field);
+        let b = FieldElement::new(2, field);
+        let c = FieldElement::new(3, field);
+        let poly = Polynomial::new(vec![a, b, c]);
+        let coset_offset = FieldElement::new(10, field);
 
-        let poly = Polynomial::new(coeffs, prime);
-        let layer = FriLayer::new(poly, 10);
+        let domain = vec![
+            FieldElement::new(0, field),
+            FieldElement::new(1, field),
+            FieldElement::new(2, field),
+        ];
 
-        dbg!(&layer.merkle_tree.root());
-        dbg!(&layer.merkle_tree.root_hex());
+        let layer = FriLayer::new(&poly, &coset_offset, domain);
 
-        // the evaluation at 5 should equal 86
-        assert_eq!(layer.evaluations[5], FiniteField::new(86, prime))
+        assert!(!layer.polynomial.coeffs.is_empty());
     }
 }

@@ -1,6 +1,10 @@
+pub mod finite_field;
 pub mod fri;
-pub mod math;
+pub mod polynomial;
+pub mod prover;
 
 // public re-export
+pub use finite_field::*;
 pub use fri::*;
-pub use math::*;
+pub use polynomial::*;
+pub use prover::*;
